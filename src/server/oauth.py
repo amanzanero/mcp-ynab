@@ -3,8 +3,14 @@
 Satisfies the MCP remote-auth spec (metadata discovery, dynamic client
 registration, PKCE) well enough for claude.ai's web connector, without any
 real account system: "login" is just entering the shared MCP_AUTH_TOKEN on a
-one-field consent page. All state is in-memory — a redeploy just means
-reauthorizing, which is fine for a single-user deployment.
+one-field consent page.
+
+Registered clients and issued tokens are persisted to the same SQLite file
+used for the YNAB response cache, so a redeploy doesn't force reauthorizing
+the connector — as long as that file lives on a volume (ephemeral container
+disk still gets wiped either way). The in-flight authorize->consent handoff
+(`pending`) and short-lived auth codes are kept in memory only; if a redeploy
+happens mid-flow, the user just retries the connection.
 """
 
 import secrets
@@ -20,6 +26,12 @@ from mcp.server.auth.provider import (
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
+from src.db.engine import get_session
+from src.db.tables import OAuthAccessToken as OAuthAccessTokenRow
+from src.db.tables import OAuthClient as OAuthClientRow
+from src.db.tables import OAuthRefreshToken as OAuthRefreshTokenRow
+from src.server._shared import _ensure_db
+
 AUTH_CODE_TTL_SECONDS = 300
 ACCESS_TOKEN_TTL_SECONDS = 3600
 
@@ -27,18 +39,21 @@ ACCESS_TOKEN_TTL_SECONDS = 3600
 class YnabOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, RefreshToken, AccessToken]):
     def __init__(self, password: str) -> None:
         self.password = password
-        self.clients: dict[str, OAuthClientInformationFull] = {}
         self.pending: dict[str, tuple[OAuthClientInformationFull, AuthorizationParams]] = {}
         self.auth_codes: dict[str, AuthorizationCode] = {}
-        self.access_tokens: dict[str, AccessToken] = {}
-        self.refresh_tokens: dict[str, RefreshToken] = {}
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        return self.clients.get(client_id)
+        await _ensure_db()
+        async with get_session() as session:
+            row = await session.get(OAuthClientRow, client_id)
+            return OAuthClientInformationFull.model_validate(row.data) if row else None
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         assert client_info.client_id is not None
-        self.clients[client_info.client_id] = client_info
+        await _ensure_db()
+        async with get_session() as session:
+            session.add(OAuthClientRow(client_id=client_info.client_id, data=client_info.model_dump(mode="json")))
+            await session.commit()
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         nonce = secrets.token_urlsafe(32)
@@ -78,39 +93,65 @@ class YnabOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, Refr
         self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
         del self.auth_codes[authorization_code.code]
-        return self._issue_tokens(authorization_code.client_id, authorization_code.scopes)
+        return await self._issue_tokens(authorization_code.client_id, authorization_code.scopes)
 
     async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> RefreshToken | None:
-        token = self.refresh_tokens.get(refresh_token)
-        if token is None or token.client_id != client.client_id:
-            return None
-        return token
+        await _ensure_db()
+        async with get_session() as session:
+            row = await session.get(OAuthRefreshTokenRow, refresh_token)
+            if row is None:
+                return None
+            token = RefreshToken.model_validate(row.data)
+            if token.client_id != client.client_id:
+                return None
+            return token
 
     async def exchange_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: RefreshToken, scopes: list[str]
     ) -> OAuthToken:
-        del self.refresh_tokens[refresh_token.token]
-        return self._issue_tokens(refresh_token.client_id, scopes or refresh_token.scopes)
+        await _ensure_db()
+        async with get_session() as session:
+            row = await session.get(OAuthRefreshTokenRow, refresh_token.token)
+            if row is not None:
+                await session.delete(row)
+                await session.commit()
+        return await self._issue_tokens(refresh_token.client_id, scopes or refresh_token.scopes)
 
     async def load_access_token(self, token: str) -> AccessToken | None:
-        access_token = self.access_tokens.get(token)
-        if access_token is None:
-            return None
-        if access_token.expires_at and access_token.expires_at < time.time():
-            del self.access_tokens[token]
-            return None
-        return access_token
+        await _ensure_db()
+        async with get_session() as session:
+            row = await session.get(OAuthAccessTokenRow, token)
+            if row is None:
+                return None
+            access_token = AccessToken.model_validate(row.data)
+            if access_token.expires_at and access_token.expires_at < time.time():
+                await session.delete(row)
+                await session.commit()
+                return None
+            return access_token
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
-        self.access_tokens.pop(token.token, None)
-        self.refresh_tokens.pop(token.token, None)
+        await _ensure_db()
+        async with get_session() as session:
+            access_row = await session.get(OAuthAccessTokenRow, token.token)
+            if access_row is not None:
+                await session.delete(access_row)
+            refresh_row = await session.get(OAuthRefreshTokenRow, token.token)
+            if refresh_row is not None:
+                await session.delete(refresh_row)
+            await session.commit()
 
-    def _issue_tokens(self, client_id: str, scopes: list[str]) -> OAuthToken:
+    async def _issue_tokens(self, client_id: str, scopes: list[str]) -> OAuthToken:
         access = secrets.token_urlsafe(32)
         refresh = secrets.token_urlsafe(32)
         expires_at = int(time.time()) + ACCESS_TOKEN_TTL_SECONDS
-        self.access_tokens[access] = AccessToken(token=access, client_id=client_id, scopes=scopes, expires_at=expires_at)
-        self.refresh_tokens[refresh] = RefreshToken(token=refresh, client_id=client_id, scopes=scopes)
+        access_token = AccessToken(token=access, client_id=client_id, scopes=scopes, expires_at=expires_at)
+        refresh_token = RefreshToken(token=refresh, client_id=client_id, scopes=scopes)
+        await _ensure_db()
+        async with get_session() as session:
+            session.add(OAuthAccessTokenRow(token=access, data=access_token.model_dump(mode="json")))
+            session.add(OAuthRefreshTokenRow(token=refresh, data=refresh_token.model_dump(mode="json")))
+            await session.commit()
         return OAuthToken(
             access_token=access,
             refresh_token=refresh,

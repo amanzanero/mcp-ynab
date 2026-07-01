@@ -105,3 +105,26 @@ class ResponseCache(Base):
     def update_from_model_list(self, models: Sequence[YNABBaseModel]) -> None:
         self.data = [m.model_dump() for m in models]
         self.cached_at = datetime.now(timezone.utc)
+
+
+class OAuthClient(Base):
+    """A dynamically-registered OAuth client (e.g. claude.ai's connector)."""
+
+    __tablename__ = "oauth_client"
+
+    client_id: Mapped[str] = mapped_column(String, primary_key=True)
+    data: Mapped[Any] = mapped_column(JSON)
+
+
+class OAuthAccessToken(Base):
+    __tablename__ = "oauth_access_token"
+
+    token: Mapped[str] = mapped_column(String, primary_key=True)
+    data: Mapped[Any] = mapped_column(JSON)
+
+
+class OAuthRefreshToken(Base):
+    __tablename__ = "oauth_refresh_token"
+
+    token: Mapped[str] = mapped_column(String, primary_key=True)
+    data: Mapped[Any] = mapped_column(JSON)
