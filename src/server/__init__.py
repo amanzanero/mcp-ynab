@@ -2,6 +2,7 @@ import os
 import secrets
 
 import uvicorn
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -86,6 +87,9 @@ class _BearerAuthMiddleware:
 def main():
     mcp.settings.host = "0.0.0.0"
     mcp.settings.port = int(os.environ.get("PORT", 8000))
+    # Behind Railway's proxy the Host header won't be localhost; DNS-rebinding
+    # protection is redundant here since MCP_AUTH_TOKEN is the real access control.
+    mcp.settings.transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
     app = mcp.sse_app()
     token = os.environ.get("MCP_AUTH_TOKEN")
