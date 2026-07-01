@@ -1,0 +1,8 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "uv run python -m src.server"
+healthcheckPath = "/sse"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"

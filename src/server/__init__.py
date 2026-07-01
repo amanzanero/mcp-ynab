@@ -1,3 +1,5 @@
+import os
+
 from src.server._shared import mcp
 
 # Import domain modules to trigger @mcp.tool() registration
@@ -58,4 +60,5 @@ __all__ = [
 
 
 def main():
-    mcp.run(transport="stdio")
+    port = int(os.environ.get("PORT", 8000))
+    mcp.run(transport="sse", host="0.0.0.0", port=port)
