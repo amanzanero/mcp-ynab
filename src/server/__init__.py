@@ -1,12 +1,18 @@
 import os
 import secrets
+import sys
 
 import uvicorn
+from mcp.server.auth.provider import ProviderTokenVerifier
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.transport_security import TransportSecuritySettings
-from starlette.responses import PlainTextResponse
+from pydantic import AnyHttpUrl
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.server._shared import mcp
+from src.server.oauth import CONSENT_FORM_HTML, YnabOAuthProvider
 
 # Import domain modules to trigger @mcp.tool() registration
 from src.server.user import get_user
@@ -98,6 +104,54 @@ class _HealthCheckMiddleware:
         await self.app(scope, receive, send)
 
 
+def _public_url(port: int) -> str:
+    explicit = os.environ.get("PUBLIC_URL")
+    if explicit:
+        return explicit.rstrip("/")
+    domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    if domain:
+        return f"https://{domain}"
+    return f"http://localhost:{port}"
+
+
+def _configure_oauth(token: str, port: int) -> None:
+    """Wire a minimal single-user OAuth server into `mcp` so claude.ai's web
+    connector (which requires OAuth, unlike Claude Code's header-based config)
+    can authorize. Gated by the same MCP_AUTH_TOKEN used for plain-bearer mode."""
+    issuer = AnyHttpUrl(_public_url(port))
+    provider = YnabOAuthProvider(password=token)
+
+    mcp._auth_server_provider = provider
+    mcp._token_verifier = ProviderTokenVerifier(provider)
+    mcp.settings.auth = AuthSettings(
+        issuer_url=issuer,
+        resource_server_url=issuer,
+        client_registration_options=ClientRegistrationOptions(enabled=True),
+        revocation_options=RevocationOptions(enabled=True),
+    )
+
+    async def consent(request: Request) -> Response:
+        if request.method == "GET":
+            nonce = request.query_params.get("nonce", "")
+            return HTMLResponse(CONSENT_FORM_HTML.format(nonce=nonce, error=""))
+
+        form = await request.form()
+        nonce = str(form.get("nonce", ""))
+        password = str(form.get("password", ""))
+        if not secrets.compare_digest(password, provider.password):
+            return HTMLResponse(
+                CONSENT_FORM_HTML.format(nonce=nonce, error="<p style='color:red'>Incorrect token.</p>"),
+                status_code=401,
+            )
+
+        redirect_url = provider.complete_consent(nonce)
+        if redirect_url is None:
+            return PlainTextResponse("Authorization request expired. Please reconnect from your client.", status_code=400)
+        return RedirectResponse(redirect_url, status_code=302)
+
+    mcp.custom_route("/consent", methods=["GET", "POST"])(consent)
+
+
 def main():
     mcp.settings.host = "0.0.0.0"
     mcp.settings.port = int(os.environ.get("PORT", 8000))
@@ -105,9 +159,16 @@ def main():
     # protection is redundant here since MCP_AUTH_TOKEN is the real access control.
     mcp.settings.transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
-    app = mcp.sse_app()
     token = os.environ.get("MCP_AUTH_TOKEN")
-    if token:
+    oauth_enabled = os.environ.get("MCP_OAUTH_ENABLED", "").lower() in ("1", "true", "yes")
+    if oauth_enabled:
+        if not token:
+            print("ERROR: MCP_OAUTH_ENABLED requires MCP_AUTH_TOKEN to be set", file=sys.stderr)
+            sys.exit(1)
+        _configure_oauth(token, mcp.settings.port)
+
+    app = mcp.sse_app()
+    if token and not oauth_enabled:
         app = _BearerAuthMiddleware(app, token)
     app = _HealthCheckMiddleware(app)
 
