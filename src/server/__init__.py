@@ -84,6 +84,20 @@ class _BearerAuthMiddleware:
         await self.app(scope, receive, send)
 
 
+class _HealthCheckMiddleware:
+    """Answer Railway's unauthenticated healthcheck without exposing the real MCP endpoint."""
+
+    def __init__(self, app: ASGIApp, path: str = "/health") -> None:
+        self.app = app
+        self.path = path
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["path"] == self.path:
+            await PlainTextResponse("ok")(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 def main():
     mcp.settings.host = "0.0.0.0"
     mcp.settings.port = int(os.environ.get("PORT", 8000))
@@ -95,5 +109,6 @@ def main():
     token = os.environ.get("MCP_AUTH_TOKEN")
     if token:
         app = _BearerAuthMiddleware(app, token)
+    app = _HealthCheckMiddleware(app)
 
     uvicorn.run(app, host=mcp.settings.host, port=mcp.settings.port)

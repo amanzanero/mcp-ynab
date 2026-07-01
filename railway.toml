@@ -3,6 +3,6 @@ builder = "RAILPACK"
 
 [deploy]
 startCommand = "uv run python -m src.server"
-healthcheckPath = "/sse"
+healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
