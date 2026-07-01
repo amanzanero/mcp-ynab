@@ -1,4 +1,9 @@
 import os
+import secrets
+
+import uvicorn
+from starlette.responses import PlainTextResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.server._shared import mcp
 
@@ -59,6 +64,32 @@ __all__ = [
 ]
 
 
+class _BearerAuthMiddleware:
+    """Gate every request behind a static bearer token (single-user deployments)."""
+
+    def __init__(self, app: ASGIApp, token: str) -> None:
+        self.app = app
+        self.expected = f"Bearer {token}"
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = dict(scope["headers"])
+        authorization = headers.get(b"authorization", b"").decode()
+        if not secrets.compare_digest(authorization, self.expected):
+            await PlainTextResponse("Unauthorized", status_code=401)(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 def main():
-    port = int(os.environ.get("PORT", 8000))
-    mcp.run(transport="sse", host="0.0.0.0", port=port)
+    mcp.settings.host = "0.0.0.0"
+    mcp.settings.port = int(os.environ.get("PORT", 8000))
+
+    app = mcp.sse_app()
+    token = os.environ.get("MCP_AUTH_TOKEN")
+    if token:
+        app = _BearerAuthMiddleware(app, token)
+
+    uvicorn.run(app, host=mcp.settings.host, port=mcp.settings.port)
