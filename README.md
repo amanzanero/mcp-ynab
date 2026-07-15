@@ -4,6 +4,8 @@ An MCP server that connects AI assistants to your [YNAB](https://www.ynab.com/) 
 
 **[mcp-ynab.com](https://mcp-ynab.com)** — Full setup guide, troubleshooting, and more.
 
+> This is a fork of [pragprogrammer/mcp-ynab](https://github.com/pragprogrammer/mcp-ynab) with an added SSE + OAuth mode for running the server as a hosted remote MCP endpoint (e.g. on Railway) instead of only via local stdio. See [Hosted Deployment](#hosted-deployment) below.
+
 ## Features
 
 - **30+ tools** — budgets, accounts, transactions, categories, payees, months, scheduled transactions, and analytics
@@ -70,6 +72,29 @@ See [mcp-ynab.com](https://mcp-ynab.com) for config file locations and troublesh
 Every tool that returns a model accepts an optional `exclude_fields` list. By
 default each tool returns a sensible subset of fields to keep token usage low.
 See [FIELDS.md](./FIELDS.md) for per-model defaults and override examples.
+
+## Hosted Deployment
+
+The server can also run over SSE as a remote MCP endpoint (e.g. deployed on [Railway](https://railway.app/) via the included `railway.toml`) instead of local stdio. This is a single-user setup — there's no multi-tenant account system.
+
+```bash
+# runs the SSE server on $PORT (default 8000) instead of stdio
+uv run python -m src.server
+```
+
+Environment variables (in addition to `YNAB_API_KEY`):
+
+| Variable | Purpose |
+|----------|---------|
+| `PORT` | Port to bind (Railway sets this automatically) |
+| `MCP_AUTH_TOKEN` | Shared bearer token that gates the `/sse` endpoint. Unset = unauthenticated. |
+| `MCP_OAUTH_ENABLED` | `true` to enable an OAuth 2.1 flow (metadata discovery, dynamic client registration, PKCE) for claude.ai's web/mobile "Custom Connector", which can't use a static bearer header. Requires `MCP_AUTH_TOKEN`; the same token doubles as the password on the one-field consent page. |
+| `PUBLIC_URL` | Public base URL used as the OAuth issuer. Falls back to Railway's auto-injected `RAILWAY_PUBLIC_DOMAIN`, then `http://localhost:$PORT`. |
+
+Notes:
+- `/health` is always unauthenticated so platform healthchecks succeed even with auth enabled.
+- Plain-bearer mode (`MCP_AUTH_TOKEN` set, `MCP_OAUTH_ENABLED` unset) is what Claude Code/Desktop's header-based MCP config expects.
+- With OAuth enabled, registered clients and issued access/refresh tokens are persisted to the same SQLite cache DB (`cache_db_path`, see [config.py](./src/config.py)), so they survive redeploys as long as that file is on a persistent volume. Only the in-flight authorize→consent handoff and short-lived auth codes are in-memory, so a redeploy mid-authorization just means retrying the connection.
 
 ## Development
 
