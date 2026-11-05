@@ -1,7 +1,7 @@
 """Fresh-resolution smoke test.
 
 Installs a built wheel into a clean venv and drives the real `mcp-ynab` entry point
-through an MCP SSE handshake (the fork serves SSE, not stdio).
+through an MCP streamable HTTP handshake (the fork serves HTTP, not stdio).
 
 The point of this test is what it deliberately does NOT do: it never touches uv.lock,
 never runs `uv sync` or `uv run`. It resolves dependencies from the constraints declared
@@ -74,11 +74,13 @@ def venv_bin(venv: Path, name: str) -> Path:
 
 CLIENT_SNIPPET = """
 import asyncio, json, sys
+import httpx2
 from mcp import ClientSession
-from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamable_http_client
 
 async def go(url, token):
-    async with sse_client(url, headers={"Authorization": "Bearer " + token}) as (r, w):
+    http = httpx2.AsyncClient(headers={"Authorization": "Bearer " + token})
+    async with streamable_http_client(url, http_client=http) as (r, w):
         async with ClientSession(r, w) as session:
             init = await session.initialize()
             tools = (await session.list_tools()).tools
@@ -97,7 +99,7 @@ def free_port() -> int:
 
 
 def handshake(server_cmd: list[str], python: Path) -> list[str]:
-    """Start the SSE server, wait for /health, then run initialize + tools/list
+    """Start the streamable HTTP server, wait for /health, then run initialize + tools/list
     with the mcp client from the fresh venv. Returns the tool names."""
     port = free_port()
     env = dict(
@@ -127,7 +129,7 @@ def handshake(server_cmd: list[str], python: Path) -> list[str]:
         print("  /health ok")
 
         result = subprocess.run(
-            [str(python), "-c", CLIENT_SNIPPET, f"http://127.0.0.1:{port}/sse", TOKEN],
+            [str(python), "-c", CLIENT_SNIPPET, f"http://127.0.0.1:{port}/mcp", TOKEN],
             capture_output=True, text=True, timeout=READ_TIMEOUT,
         )
         if result.returncode != 0:
@@ -208,7 +210,7 @@ def main() -> int:
         for line in versions.stdout.strip().splitlines():
             print(f"  {line}")
 
-        print("[4/4] SSE handshake against the installed entry point")
+        print("[4/4] streamable HTTP handshake against the installed entry point")
         entry = venv_bin(venv, "mcp-ynab")
         if not entry.exists():
             raise SystemExit(f"entry point not installed at {entry}")
@@ -224,7 +226,7 @@ def main() -> int:
                 "If this change was intentional, update EXPECTED_TOOL_COUNT."
             )
 
-        print(f"\nPASS: {len(tools)} tools registered and served over SSE")
+        print(f"\nPASS: {len(tools)} tools registered and served over streamable HTTP")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

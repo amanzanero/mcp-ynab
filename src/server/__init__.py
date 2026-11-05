@@ -189,7 +189,7 @@ def main():
 
     mcp._lowlevel_server.icons = [Icon(src=f"{_public_url(port)}/favicon.png", mimeType="image/png", sizes=["256x256"])]
 
-    app = mcp.sse_app(host=host, transport_security=transport_security)
+    app = mcp.streamable_http_app(host=host, transport_security=transport_security)
     if token and not oauth_enabled:
         app = _BearerAuthMiddleware(app, token)
     app = _HealthCheckMiddleware(app)

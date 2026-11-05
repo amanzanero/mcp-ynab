@@ -4,7 +4,7 @@ An MCP server that connects AI assistants to your [YNAB](https://www.ynab.com/) 
 
 **[mcp-ynab.com](https://mcp-ynab.com)** — Full setup guide, troubleshooting, and more.
 
-> This is a fork of [pragprogrammer/mcp-ynab](https://github.com/pragprogrammer/mcp-ynab) with an added SSE + OAuth mode for running the server as a hosted remote MCP endpoint (e.g. on Railway) instead of only via local stdio. See [Hosted Deployment](#hosted-deployment) below.
+> This is a fork of [pragprogrammer/mcp-ynab](https://github.com/pragprogrammer/mcp-ynab) with an added streamable HTTP + OAuth mode for running the server as a hosted remote MCP endpoint (e.g. on Railway) instead of only via local stdio. See [Hosted Deployment](#hosted-deployment) below.
 
 ## Features
 
@@ -75,10 +75,10 @@ See [FIELDS.md](./FIELDS.md) for per-model defaults and override examples.
 
 ## Hosted Deployment
 
-The server can also run over SSE as a remote MCP endpoint (e.g. deployed on [Railway](https://railway.app/) via the included `railway.toml`) instead of local stdio. This is a single-user setup — there's no multi-tenant account system.
+The server can also run over streamable HTTP as a remote MCP endpoint (e.g. deployed on [Railway](https://railway.app/) via the included `railway.toml`) instead of local stdio. This is a single-user setup — there's no multi-tenant account system.
 
 ```bash
-# runs the SSE server on $PORT (default 8000) instead of stdio
+# runs the HTTP server on $PORT (default 8000) instead of stdio
 uv run python -m src.server
 ```
 
@@ -87,7 +87,7 @@ Environment variables (in addition to `YNAB_API_KEY`):
 | Variable | Purpose |
 |----------|---------|
 | `PORT` | Port to bind (Railway sets this automatically) |
-| `MCP_AUTH_TOKEN` | Shared bearer token that gates the `/sse` endpoint. Unset = unauthenticated. |
+| `MCP_AUTH_TOKEN` | Shared bearer token that gates the `/mcp` endpoint. Unset = unauthenticated. |
 | `MCP_OAUTH_ENABLED` | `true` to enable an OAuth 2.1 flow (metadata discovery, dynamic client registration, PKCE) for claude.ai's web/mobile "Custom Connector", which can't use a static bearer header. Requires `MCP_AUTH_TOKEN`; the same token doubles as the password on the one-field consent page. |
 | `PUBLIC_URL` | Public base URL used as the OAuth issuer. Falls back to Railway's auto-injected `RAILWAY_PUBLIC_DOMAIN`, then `http://localhost:$PORT`. |
 
