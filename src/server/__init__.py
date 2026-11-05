@@ -173,11 +173,11 @@ def _configure_oauth(token: str, port: int) -> None:
 
 
 def main():
-    mcp.settings.host = "0.0.0.0"
-    mcp.settings.port = int(os.environ.get("PORT", 8000))
+    host = "0.0.0.0"
+    port = int(os.environ.get("PORT", 8000))
     # Behind Railway's proxy the Host header won't be localhost; DNS-rebinding
     # protection is redundant here since MCP_AUTH_TOKEN is the real access control.
-    mcp.settings.transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
     token = os.environ.get("MCP_AUTH_TOKEN")
     oauth_enabled = os.environ.get("MCP_OAUTH_ENABLED", "").lower() in ("1", "true", "yes")
@@ -185,13 +185,13 @@ def main():
         if not token:
             print("ERROR: MCP_OAUTH_ENABLED requires MCP_AUTH_TOKEN to be set", file=sys.stderr)
             sys.exit(1)
-        _configure_oauth(token, mcp.settings.port)
+        _configure_oauth(token, port)
 
-    mcp._mcp_server.icons = [Icon(src=f"{_public_url(mcp.settings.port)}/favicon.png", mimeType="image/png", sizes=["256x256"])]
+    mcp._lowlevel_server.icons = [Icon(src=f"{_public_url(port)}/favicon.png", mimeType="image/png", sizes=["256x256"])]
 
-    app = mcp.sse_app()
+    app = mcp.sse_app(host=host, transport_security=transport_security)
     if token and not oauth_enabled:
         app = _BearerAuthMiddleware(app, token)
     app = _HealthCheckMiddleware(app)
 
-    uvicorn.run(app, host=mcp.settings.host, port=mcp.settings.port)
+    uvicorn.run(app, host=host, port=port)
