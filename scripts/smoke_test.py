@@ -1,7 +1,7 @@
 """Fresh-resolution smoke test.
 
 Installs a built wheel into a clean venv and drives the real `mcp-ynab` entry point
-through an MCP stdio handshake.
+through an MCP SSE handshake (the fork serves SSE, not stdio).
 
 The point of this test is what it deliberately does NOT do: it never touches uv.lock,
 never runs `uv sync` or `uv run`. It resolves dependencies from the constraints declared
@@ -20,13 +20,14 @@ Exits non-zero with the server's stderr attached on any failure.
 import argparse
 import json
 import os
-import queue
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
-import threading
+import time
 import tomllib
+import urllib.request
 from pathlib import Path
 
 # Bump this when tools are added or removed. A mismatch means either the change was
@@ -37,7 +38,6 @@ EXPECTED_TOOL_COUNT = 47
 # reported as a missing name rather than only as a count that happens to still match.
 SENTINEL_TOOLS = {"get_user", "list_plans", "list_accounts", "list_transactions"}
 
-PROTOCOL_VERSION = "2025-06-18"
 READ_TIMEOUT = 30  # seconds to wait for any single JSON-RPC response
 
 
@@ -72,86 +72,79 @@ def venv_bin(venv: Path, name: str) -> Path:
     return venv / "bin" / name
 
 
-class StdioClient:
-    """Minimal newline-delimited JSON-RPC client over a subprocess's stdio.
+CLIENT_SNIPPET = """
+import asyncio, json, sys
+from mcp import ClientSession
+from mcp.client.sse import sse_client
 
-    Reads on a background thread so a server that starts but never answers fails the
-    test with a timeout instead of hanging CI.
-    """
+async def go(url, token):
+    async with sse_client(url, headers={"Authorization": "Bearer " + token}) as (r, w):
+        async with ClientSession(r, w) as session:
+            init = await session.initialize()
+            tools = (await session.list_tools()).tools
+            print(json.dumps({"server": init.server_info.name, "tools": [t.name for t in tools]}))
 
-    def __init__(self, argv: list[str], env: dict[str, str]):
-        self.proc = subprocess.Popen(
-            argv,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            env=env,
-        )
-        self._lines: queue.Queue[str | None] = queue.Queue()
-        self._reader = threading.Thread(target=self._pump, daemon=True)
-        self._reader.start()
+asyncio.run(go(sys.argv[1], sys.argv[2]))
+"""
 
-    def _pump(self) -> None:
-        for line in self.proc.stdout:
-            self._lines.put(line)
-        self._lines.put(None)
-
-    def send(self, message: dict) -> None:
-        self.proc.stdin.write(json.dumps(message) + "\n")
-        self.proc.stdin.flush()
-
-    def read(self, what: str) -> dict:
-        try:
-            line = self._lines.get(timeout=READ_TIMEOUT)
-        except queue.Empty:
-            raise SystemExit(f"timed out after {READ_TIMEOUT}s waiting for {what}")
-        if line is None:
-            raise SystemExit(f"server closed stdout before answering {what}")
-        return json.loads(line)
-
-    def close(self) -> str:
-        self.proc.terminate()
-        try:
-            self.proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            self.proc.kill()
-        return self.proc.stderr.read()
+TOKEN = "smoke-test-token"
 
 
-def handshake(server_cmd: list[str]) -> list[dict]:
-    """Run initialize + tools/list against the server, returning the tool list."""
-    env = dict(os.environ, YNAB_API_KEY="smoke-test-dummy-key", PYTHONUNBUFFERED="1")
-    client = StdioClient(server_cmd, env)
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def handshake(server_cmd: list[str], python: Path) -> list[str]:
+    """Start the SSE server, wait for /health, then run initialize + tools/list
+    with the mcp client from the fresh venv. Returns the tool names."""
+    port = free_port()
+    env = dict(
+        os.environ,
+        YNAB_API_KEY="smoke-test-dummy-key",
+        MCP_AUTH_TOKEN=TOKEN,
+        PORT=str(port),
+        PYTHONUNBUFFERED="1",
+    )
+    proc = subprocess.Popen(
+        server_cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    )
     try:
-        client.send({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {"name": "smoke-test", "version": "1"},
-            },
-        })
-        init = client.read("initialize")
-        if "result" not in init:
-            raise SystemExit(f"initialize failed: {json.dumps(init)[:400]}")
-        server_name = init["result"].get("serverInfo", {}).get("name", "?")
-        print(f"  initialize ok (server: {server_name})")
+        deadline = time.time() + READ_TIMEOUT
+        while True:
+            if proc.poll() is not None:
+                raise SystemExit(f"server exited early with code {proc.returncode}")
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as resp:
+                    if resp.status == 200:
+                        break
+            except OSError:
+                pass
+            if time.time() > deadline:
+                raise SystemExit(f"timed out after {READ_TIMEOUT}s waiting for /health")
+            time.sleep(0.5)
+        print("  /health ok")
 
-        client.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        client.send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
-        listing = client.read("tools/list")
-        if "result" not in listing:
-            raise SystemExit(f"tools/list failed: {json.dumps(listing)[:400]}")
-        return listing["result"]["tools"]
+        result = subprocess.run(
+            [str(python), "-c", CLIENT_SNIPPET, f"http://127.0.0.1:{port}/sse", TOKEN],
+            capture_output=True, text=True, timeout=READ_TIMEOUT,
+        )
+        if result.returncode != 0:
+            raise SystemExit(f"MCP client handshake failed:\n{result.stderr[-800:]}")
+        info = json.loads(result.stdout.strip().splitlines()[-1])
+        print(f"  initialize ok (server: {info['server']})")
+        return info["tools"]
     finally:
-        stderr = client.close()
-        if stderr.strip():
-            print("  server stderr:")
-            for line in stderr.strip().splitlines()[:20]:
+        proc.terminate()
+        try:
+            output, _ = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            output, _ = proc.communicate()
+        if output and output.strip():
+            print("  server output:")
+            for line in output.strip().splitlines()[:20]:
                 print(f"    {line}")
 
 
@@ -215,13 +208,13 @@ def main() -> int:
         for line in versions.stdout.strip().splitlines():
             print(f"  {line}")
 
-        print("[4/4] stdio handshake against the installed entry point")
+        print("[4/4] SSE handshake against the installed entry point")
         entry = venv_bin(venv, "mcp-ynab")
         if not entry.exists():
             raise SystemExit(f"entry point not installed at {entry}")
-        tools = handshake([str(entry)])
+        tools = handshake([str(entry)], py)
 
-        names = {t["name"] for t in tools}
+        names = set(tools)
         missing = SENTINEL_TOOLS - names
         if missing:
             raise SystemExit(f"tools/list is missing expected tools: {sorted(missing)}")
@@ -231,7 +224,7 @@ def main() -> int:
                 "If this change was intentional, update EXPECTED_TOOL_COUNT."
             )
 
-        print(f"\nPASS: {len(tools)} tools registered and served over stdio")
+        print(f"\nPASS: {len(tools)} tools registered and served over SSE")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
