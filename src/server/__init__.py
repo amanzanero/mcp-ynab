@@ -1,10 +1,12 @@
 import os
 import secrets
 import sys
+from pathlib import Path
 
 import uvicorn
 from mcp.server.auth.provider import ProviderTokenVerifier
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
+from mcp.types import Icon
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
 from starlette.requests import Request
@@ -90,17 +92,35 @@ class _BearerAuthMiddleware:
         await self.app(scope, receive, send)
 
 
+_STATIC_DIR = Path(__file__).parent / "static"
+_ICON_ROUTES = {
+    "/favicon.ico": ("favicon.ico", "image/x-icon"),
+    "/favicon.png": ("favicon.png", "image/png"),
+}
+
+
 class _HealthCheckMiddleware:
-    """Answer Railway's unauthenticated healthcheck without exposing the real MCP endpoint."""
+    """Answer Railway's unauthenticated healthcheck and serve the public favicon
+    without exposing the real MCP endpoint."""
 
     def __init__(self, app: ASGIApp, path: str = "/health") -> None:
         self.app = app
         self.path = path
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"] == self.path:
-            await PlainTextResponse("ok")(scope, receive, send)
-            return
+        if scope["type"] == "http":
+            if scope["path"] == self.path:
+                await PlainTextResponse("ok")(scope, receive, send)
+                return
+            icon = _ICON_ROUTES.get(scope["path"])
+            if icon:
+                filename, media_type = icon
+                await Response(
+                    (_STATIC_DIR / filename).read_bytes(),
+                    media_type=media_type,
+                    headers={"Cache-Control": "public, max-age=86400"},
+                )(scope, receive, send)
+                return
         await self.app(scope, receive, send)
 
 
@@ -166,6 +186,8 @@ def main():
             print("ERROR: MCP_OAUTH_ENABLED requires MCP_AUTH_TOKEN to be set", file=sys.stderr)
             sys.exit(1)
         _configure_oauth(token, mcp.settings.port)
+
+    mcp._mcp_server.icons = [Icon(src=f"{_public_url(mcp.settings.port)}/favicon.png", mimeType="image/png", sizes=["256x256"])]
 
     app = mcp.sse_app()
     if token and not oauth_enabled:
