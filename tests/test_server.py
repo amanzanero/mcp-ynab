@@ -521,7 +521,8 @@ class TestGetMonth:
 
         nested = result["categories"][0]
         assert "original_category_group_id" not in nested
-        assert "goal_cadence" not in nested
+        assert nested["goal_cadence"] == 1
+        assert nested["goal_period"] == "monthly"
         assert nested["name"] == "Food"
 
 
