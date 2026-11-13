@@ -73,19 +73,49 @@ Nested inside `Transaction.subtransactions` for split transactions.
 `goal_percentage_complete`, `goal_months_to_budget`, `goal_under_funded`,
 `goal_overall_funded`, `goal_overall_left`, `goal_snoozed_at`, `deleted`
 
+**Derived fields** (computed by this server, not returned by YNAB): `goal_period`,
+`goal_monthly_equivalent`. See [Goal cadence](#goal-cadence) below.
+
 **Default `exclude_fields`**:
 ```json
 ["original_category_group_id", "goal_target_month", "goal_creation_month",
- "goal_snoozed_at", "goal_needs_whole_amount", "goal_day", "goal_cadence",
- "goal_cadence_frequency", "deleted"]
+ "goal_snoozed_at", "goal_needs_whole_amount", "deleted"]
 ```
 
 `original_category_group_id` and `goal_target_month` are deprecated by YNAB. The
-goal cadence/day fields are advanced and rarely needed; the goal target/progress
-fields (`goal_target`, `goal_target_date`, `goal_percentage_complete`,
-`goal_under_funded`, `goal_overall_funded`, `goal_overall_left`,
-`goal_months_to_budget`) are kept by default since they're what most agents need
-for budgeting analysis.
+goal cadence fields (`goal_cadence`, `goal_cadence_frequency`, `goal_day`) are
+included by default so a goal's cadence is always explicit, along with the goal
+target/progress fields (`goal_target`, `goal_target_date`,
+`goal_percentage_complete`, `goal_under_funded`, `goal_overall_funded`,
+`goal_overall_left`, `goal_months_to_budget`).
+
+#### Goal cadence
+
+YNAB encodes a goal's repeat schedule as `goal_cadence` (a code) and
+`goal_cadence_frequency` (a multiplier). The server adds two derived fields:
+
+`goal_period` is one of `weekly`, `monthly`, `yearly`, `every_n_months`,
+`every_2_years` or `none`:
+
+| `goal_cadence` | Meaning | `goal_period` |
+|---|---|---|
+| 1 | monthly, repeated `goal_cadence_frequency` times | `monthly` (`every_n_months` if frequency > 1) |
+| 2 | weekly, every `goal_cadence_frequency` weeks | `weekly` |
+| 3-12 | every 2-11 months (N = code - 1) | `every_n_months` |
+| 13 | yearly, every `goal_cadence_frequency` years | `yearly` |
+| 14 | every 2 years | `every_2_years` |
+| null / other | no cadence | `none` |
+
+`goal_monthly_equivalent` is `goal_target` converted to a monthly amount (dollars
+in responses, like other money fields), or `null` when there is no `goal_target`
+or no cadence:
+
+- weekly: `goal_target x 52 / 12 / frequency`
+- every N months: `goal_target / N` (monthly with frequency F uses N = F)
+- yearly: `goal_target / 12 / frequency`
+- every 2 years: `goal_target / 24`
+
+Both derived fields can be hidden with `exclude_fields` like any other field.
 
 ### CategoryGroup
 
@@ -209,7 +239,6 @@ get_category_for_month(
         "budgeted", "activity", "balance", "deleted",
         "original_category_group_id", "goal_target_month",
         "goal_creation_month", "goal_snoozed_at", "goal_needs_whole_amount",
-        "goal_day", "goal_cadence", "goal_cadence_frequency",
     ],
 )
 ```
