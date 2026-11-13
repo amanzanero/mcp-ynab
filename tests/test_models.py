@@ -76,17 +76,17 @@ class TestAccount:
 
 
 class TestCategory:
-    def test_default_exclude_hides_deprecated_goal_fields(self):
+    def test_default_exclude_hides_raw_cadence_fields_but_keeps_derived(self):
         c = Category(id="c1", category_group_id="g1", name="Food",
                      goal_type="TB", goal_target=500000, goal_cadence=1,
                      goal_day=15, deleted=True)
         result = c.model_dump(by_alias=True, exclude=CATEGORY_DEFAULT_EXCLUDE)
         for hidden in ["deleted", "original_category_group_id", "goal_target_month",
                        "goal_creation_month", "goal_snoozed_at",
-                       "goal_needs_whole_amount"]:
+                       "goal_needs_whole_amount", "goal_day", "goal_cadence",
+                       "goal_cadence_frequency"]:
             assert hidden not in result
-        for shown in ["goal_day", "goal_cadence", "goal_cadence_frequency",
-                      "goal_period", "goal_monthly_equivalent"]:
+        for shown in ["goal_period", "goal_monthly_equivalent"]:
             assert shown in result
         assert result["goal_type"] == "TB"
         assert result["goal_target"] == 500000

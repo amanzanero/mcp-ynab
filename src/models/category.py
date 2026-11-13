@@ -8,6 +8,9 @@ CATEGORY_DEFAULT_EXCLUDE: set[str] = {
     "goal_creation_month",
     "goal_snoozed_at",
     "goal_needs_whole_amount",
+    "goal_day",
+    "goal_cadence",
+    "goal_cadence_frequency",
     "deleted",
 }
 

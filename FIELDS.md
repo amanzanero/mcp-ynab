@@ -79,20 +79,25 @@ Nested inside `Transaction.subtransactions` for split transactions.
 **Default `exclude_fields`**:
 ```json
 ["original_category_group_id", "goal_target_month", "goal_creation_month",
- "goal_snoozed_at", "goal_needs_whole_amount", "deleted"]
+ "goal_snoozed_at", "goal_needs_whole_amount", "goal_day", "goal_cadence",
+ "goal_cadence_frequency", "deleted"]
 ```
 
 `original_category_group_id` and `goal_target_month` are deprecated by YNAB. The
-goal cadence fields (`goal_cadence`, `goal_cadence_frequency`, `goal_day`) are
-included by default so a goal's cadence is always explicit, along with the goal
-target/progress fields (`goal_target`, `goal_target_date`,
-`goal_percentage_complete`, `goal_under_funded`, `goal_overall_funded`,
-`goal_overall_left`, `goal_months_to_budget`).
+raw goal cadence fields (`goal_cadence`, `goal_cadence_frequency`, `goal_day`) are
+hidden by default because the derived `goal_period` and `goal_monthly_equivalent`
+fields already make a goal's cadence explicit. Pass an `exclude_fields` list that
+leaves them out to get the raw values. The goal target/progress fields
+(`goal_target`, `goal_target_date`, `goal_percentage_complete`,
+`goal_under_funded`, `goal_overall_funded`, `goal_overall_left`,
+`goal_months_to_budget`) are kept by default since they're what most agents need
+for budgeting analysis.
 
 #### Goal cadence
 
 YNAB encodes a goal's repeat schedule as `goal_cadence` (a code) and
-`goal_cadence_frequency` (a multiplier). The server adds two derived fields:
+`goal_cadence_frequency` (a multiplier). Those raw fields are hidden by default;
+the server adds two derived fields that are always included:
 
 `goal_period` is one of `weekly`, `monthly`, `yearly`, `every_n_months`,
 `every_n_weeks`, `every_n_years`, `every_2_months`, `every_2_weeks`,
@@ -240,6 +245,7 @@ get_category_for_month(
         "budgeted", "activity", "balance", "deleted",
         "original_category_group_id", "goal_target_month",
         "goal_creation_month", "goal_snoozed_at", "goal_needs_whole_amount",
+        "goal_day", "goal_cadence", "goal_cadence_frequency",
     ],
 )
 ```
