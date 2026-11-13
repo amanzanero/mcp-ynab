@@ -99,16 +99,18 @@ YNAB encodes a goal's repeat schedule as `goal_cadence` (a code) and
 `goal_cadence_frequency` (a multiplier). Those raw fields are hidden by default;
 the server adds two derived fields that are always included:
 
-`goal_period` is one of `weekly`, `monthly`, `yearly`, `every_n_months`,
-`every_n_weeks`, `every_n_years`, `every_2_months`, `every_2_weeks`,
-`every_2_years` or `none`:
+`goal_period` is a self-contained label, so it can be read without
+`goal_cadence` or `goal_cadence_frequency`. It is `weekly`, `monthly` or `yearly`
+for a cycle of 1, `every_<N>_weeks`, `every_<N>_months` or `every_<N>_years` for a
+longer cycle (for example `every_2_weeks`, `every_3_months`, `every_5_years`), or
+`none`:
 
 | `goal_cadence` | Meaning | `goal_period` |
 |---|---|---|
-| 1 | monthly, repeated `goal_cadence_frequency` times | `monthly` (`every_2_months` if frequency is 2, `every_n_months` if more) |
-| 2 | weekly, every `goal_cadence_frequency` weeks | `weekly` (`every_2_weeks` if frequency is 2, `every_n_weeks` if more) |
-| 3-12 | every 2-11 months (N = code - 1) | `every_n_months` |
-| 13 | yearly, every `goal_cadence_frequency` years | `yearly` (`every_2_years` if frequency is 2, `every_n_years` if more) |
+| 1 | monthly, every `goal_cadence_frequency` months | `monthly`, or `every_<N>_months` when frequency is N > 1 |
+| 2 | weekly, every `goal_cadence_frequency` weeks | `weekly`, or `every_<N>_weeks` when frequency is N > 1 |
+| 3-12 | every 2-11 months (N = code - 1) | `every_<N>_months` |
+| 13 | yearly, every `goal_cadence_frequency` years | `yearly`, or `every_<N>_years` when frequency is N > 1 |
 | 14 | every 2 years | `every_2_years` |
 | null / other | no cadence | `none` |
 
