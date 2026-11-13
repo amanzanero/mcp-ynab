@@ -76,17 +76,17 @@ class TestAccount:
 
 
 class TestCategory:
-    def test_default_exclude_hides_deprecated_goal_fields(self):
+    def test_default_exclude_hides_raw_cadence_fields_but_keeps_derived(self):
         c = Category(id="c1", category_group_id="g1", name="Food",
                      goal_type="TB", goal_target=500000, goal_cadence=1,
                      goal_day=15, deleted=True)
         result = c.model_dump(by_alias=True, exclude=CATEGORY_DEFAULT_EXCLUDE)
         for hidden in ["deleted", "original_category_group_id", "goal_target_month",
                        "goal_creation_month", "goal_snoozed_at",
-                       "goal_needs_whole_amount"]:
+                       "goal_needs_whole_amount", "goal_day", "goal_cadence",
+                       "goal_cadence_frequency"]:
             assert hidden not in result
-        for shown in ["goal_day", "goal_cadence", "goal_cadence_frequency",
-                      "goal_period", "goal_monthly_equivalent"]:
+        for shown in ["goal_period", "goal_monthly_equivalent"]:
             assert shown in result
         assert result["goal_type"] == "TB"
         assert result["goal_target"] == 500000
@@ -96,15 +96,15 @@ class TestCategory:
         [
             (1, 1, 100000, "monthly", 100000),
             (1, 2, 200000, "every_2_months", 100000),
-            (1, 3, 300000, "every_n_months", 100000),
+            (1, 3, 300000, "every_3_months", 100000),
             (2, 1, 100000, "weekly", 433333),
             (2, 2, 100000, "every_2_weeks", 216667),
-            (2, 3, 100000, "every_n_weeks", 144444),
-            (3, 1, 200000, "every_n_months", 100000),
-            (12, 1, 1100000, "every_n_months", 100000),
+            (2, 3, 100000, "every_3_weeks", 144444),
+            (3, 1, 200000, "every_2_months", 100000),
+            (12, 1, 1100000, "every_11_months", 100000),
             (13, 1, 1200000, "yearly", 100000),
             (13, 2, 2400000, "every_2_years", 100000),
-            (13, 3, 3600000, "every_n_years", 100000),
+            (13, 3, 3600000, "every_3_years", 100000),
             (14, 1, 2400000, "every_2_years", 100000),
             (0, 1, 100000, "none", None),
             (None, None, 100000, "none", None),

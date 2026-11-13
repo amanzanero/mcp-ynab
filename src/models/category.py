@@ -8,6 +8,9 @@ CATEGORY_DEFAULT_EXCLUDE: set[str] = {
     "goal_creation_month",
     "goal_snoozed_at",
     "goal_needs_whole_amount",
+    "goal_day",
+    "goal_cadence",
+    "goal_cadence_frequency",
     "deleted",
 }
 
@@ -25,19 +28,17 @@ def _cadence_months_and_label(
     """
     freq = frequency if frequency and frequency > 0 else 1
 
-    def label(base: str, unit: str) -> str:
-        if freq == 1:
-            return base
-        return f"every_{freq}_{unit}" if freq == 2 else f"every_n_{unit}"
+    def label(base: str, unit: str, n: int) -> str:
+        return base if n == 1 else f"every_{n}_{unit}"
 
     if cadence == 1:
-        return (label("monthly", "months"), float(freq))
+        return (label("monthly", "months", freq), float(freq))
     if cadence == 2:
-        return (label("weekly", "weeks"), freq * 12 / 52)
+        return (label("weekly", "weeks", freq), freq * 12 / 52)
     if cadence == 13:
-        return (label("yearly", "years"), 12.0 * freq)
+        return (label("yearly", "years", freq), 12.0 * freq)
     if cadence is not None and 3 <= cadence <= 12:
-        return ("every_n_months", float(cadence - 1))
+        return (f"every_{cadence - 1}_months", float(cadence - 1))
     if cadence == 14:
         return ("every_2_years", 24.0)
     return ("none", None)
