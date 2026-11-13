@@ -24,12 +24,18 @@ def _cadence_months_and_label(
     Weekly cycles are expressed in months as 12/52 per week.
     """
     freq = frequency if frequency and frequency > 0 else 1
+
+    def label(base: str, unit: str) -> str:
+        if freq == 1:
+            return base
+        return f"every_{freq}_{unit}" if freq == 2 else f"every_n_{unit}"
+
     if cadence == 1:
-        return ("monthly" if freq == 1 else "every_n_months", float(freq))
+        return (label("monthly", "months"), float(freq))
     if cadence == 2:
-        return ("weekly", freq * 12 / 52)
+        return (label("weekly", "weeks"), freq * 12 / 52)
     if cadence == 13:
-        return ("yearly", 12.0 * freq)
+        return (label("yearly", "years"), 12.0 * freq)
     if cadence is not None and 3 <= cadence <= 12:
         return ("every_n_months", float(cadence - 1))
     if cadence == 14:
